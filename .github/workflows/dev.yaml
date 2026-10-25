@@ -1,0 +1,34 @@
+name: dev
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          build-args: RELEASE=${{ github.sha }}
+
+  release:
+    needs: build
+    uses: ./.github/workflows/release.yaml
+    with:
+      environment: dev
+      sha: ${{ github.sha }}
+    secrets:
+      GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
