@@ -1,0 +1,47 @@
+name: release
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      sha:
+        required: true
+        type: string
+    secrets:
+      GITOPS_TOKEN:
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: famashines/gitops
+          token: ${{ secrets.GITOPS_TOKEN }}
+      - name: Deploy the image through a gitops pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          tag="sha-${SHA}"
+          short="${SHA::7}"
+          branch="release/the-vps-fees-${ENVIRONMENT}-${short}"
+          sed -i "s|newTag: .*|newTag: ${tag}|" "kubernetes/the-vps/the-vps-fees/${ENVIRONMENT}/kustomization.yaml"
+          if git diff --quiet; then
+            echo "${ENVIRONMENT} already uses ${tag}"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "chore(the-vps-fees): release sha-${short} to ${ENVIRONMENT}"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore(the-vps-fees): release sha-${short} to ${ENVIRONMENT}" \
+            --body "Deploy \`ghcr.io/${GITHUB_REPOSITORY}:${tag}\` to ${ENVIRONMENT}, from ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${SHA}."
+          gh pr merge "$branch" --rebase --delete-branch
