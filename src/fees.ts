@@ -179,7 +179,7 @@ const accountOf = (r: Record<string, any>) => ({
   enrollmentId: r.enrollment_id,
   academicYearId: r.academic_year_id,
   academicYearName: r.academic_year_name,
-  classSectionId: r.class_section_id,
+  classId: r.class_id,
   grade: r.grade,
   openedOn: r.opened_on,
   charged: rs(r.charged),
