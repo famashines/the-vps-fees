@@ -29,11 +29,17 @@ same `commandId` again gives the first answer (200), not a second entry.
 ```
 ADMISSIONS stream            fees service                     FEES stream
 AcademicYearOpened/Updated -> years
-ClassSectionCreated/Updated -> sections
+ClassOpened ----------------> classes
+ClassClosed ----------------> remove the class
 StudentEnrolled ------------> open account --> StudentAccountOpened -> fees.>
                               charge what is due --> FeeCharged
-StudentSectionChanged -------> new grade for the next charges
+StudentClassChanged --------> new grade for the next charges
 ```
+
+- The stream on dev also has the old names from before v0.6.0
+  (ClassSectionCreated/Updated, StudentSectionChanged, with `classSectionId`).
+  The saga reads them as the new events, so a new consumer can read the
+  stream from the start. Remove this at the prod go-live, with a new stream.
 
 - The saga reads `ADMISSIONS` with the durable consumer `fees`, one message
   at a time, in stream order. Each event id goes into `handled` in the same

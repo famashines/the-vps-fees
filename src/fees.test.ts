@@ -63,13 +63,13 @@ const command = <P>(commandType: string, payload: P, commandId: string = randomU
 
 async function schoolYear(name: string, startsOn: string, endsOn: string, grade = "class-3") {
   const academicYearId = randomUUID();
-  const classSectionId = randomUUID();
+  const classId = randomUUID();
   await handleEvent(pool, event("admissions.AcademicYearOpened", { academicYearId, name, startsOn, endsOn }));
-  await handleEvent(pool, event("admissions.ClassSectionCreated", { classSectionId, academicYearId, grade, section: "A" }));
-  return { academicYearId, classSectionId };
+  await handleEvent(pool, event("admissions.ClassOpened", { classId, academicYearId, grade }));
+  return { academicYearId, classId };
 }
 
-async function enroll(year: { academicYearId: string; classSectionId: string }, occurredAt: string, now = at(occurredAt), eventId = randomUUID()) {
+async function enroll(year: { academicYearId: string; classId: string }, occurredAt: string, now = at(occurredAt), eventId = randomUUID()) {
   const enrollmentId = randomUUID();
   const e = event("admissions.StudentEnrolled", { enrollmentId, studentId: randomUUID(), ...year }, occurredAt, eventId);
   const handled = await handleEvent(pool, e, now);
@@ -117,13 +117,31 @@ test("saga: an enrollment before the schedule waits; the schedule charges the on
   assert.deepEqual(rows.map((r) => `${r.aggregate_version} ${r.event_type}`), ["1 fees.StudentAccountOpened", "2 fees.FeeCharged", "3 fees.FeeCharged", "4 fees.FeeCharged"]);
 });
 
-test("saga: a section change moves the account to the grade of the new section", { skip }, async () => {
+test("saga: a class change moves the account to the grade of the new class; a closed class goes away", { skip }, async () => {
   const year = await schoolYear("2027-28", "2027-04-01", "2028-03-31");
   const other = randomUUID();
-  await handleEvent(pool, event("admissions.ClassSectionCreated", { classSectionId: other, academicYearId: year.academicYearId, grade: "class-4", section: "B" }));
+  await handleEvent(pool, event("admissions.ClassOpened", { classId: other, academicYearId: year.academicYearId, grade: "class-4" }));
   const { enrollmentId, accountId } = await enroll(year, "2027-05-02T07:00:00Z");
-  await handleEvent(pool, event("admissions.StudentSectionChanged", { enrollmentId, studentId: randomUUID(), academicYearId: year.academicYearId, classSectionId: other, previousClassSectionId: year.classSectionId }));
+  await handleEvent(pool, event("admissions.StudentClassChanged", { enrollmentId, studentId: randomUUID(), academicYearId: year.academicYearId, classId: other, previousClassId: year.classId }));
   assert.equal((await account(accountId)).grade, "class-4");
+  assert.equal((await account(accountId)).classId, other);
+  await handleEvent(pool, event("admissions.ClassClosed", { classId: year.classId, academicYearId: year.academicYearId, grade: "class-3" }));
+  assert.equal((await pool.query("select count(*)::int as n from classes where class_id = $1", [year.classId])).rows[0].n, 0);
+});
+
+test("saga: the old event names from before v0.6.0 still open and move an account", { skip }, async () => {
+  const academicYearId = randomUUID();
+  const [a, b] = [randomUUID(), randomUUID()];
+  await handleEvent(pool, event("admissions.AcademicYearOpened", { academicYearId, name: "2028-29", startsOn: "2028-04-01", endsOn: "2029-03-31" }));
+  await handleEvent(pool, event("admissions.ClassSectionCreated", { classSectionId: a, academicYearId, grade: "class-3", section: "A" }));
+  await handleEvent(pool, event("admissions.ClassSectionCreated", { classSectionId: b, academicYearId, grade: "class-3", section: "B" }));
+  await handleEvent(pool, event("admissions.ClassSectionUpdated", { classSectionId: b, academicYearId, grade: "class-5", section: "B" }));
+  const enrollmentId = randomUUID();
+  await handleEvent(pool, event("admissions.StudentEnrolled", { enrollmentId, studentId: randomUUID(), academicYearId, classSectionId: a }));
+  const { rows } = await pool.query("select account_id from accounts where enrollment_id = $1", [enrollmentId]);
+  assert.equal((await account(rows[0].account_id)).classId, a);
+  await handleEvent(pool, event("admissions.StudentSectionChanged", { enrollmentId, studentId: randomUUID(), academicYearId, classSectionId: b, previousClassSectionId: a }));
+  assert.equal((await account(rows[0].account_id)).grade, "class-5");
 });
 
 test("payments: at the same time they get receipt numbers with no gaps, and lower the balance", { skip }, async () => {
@@ -199,12 +217,12 @@ test("saga over NATS: each event once in stream order, also when it comes twice"
   await (await jetstreamManager(nc)).streams.add({ name: stream, subjects: [`t${id}.>`], storage: "memory" });
   const js = jetstream(nc);
   const academicYearId = randomUUID();
-  const classSectionId = randomUUID();
+  const classId = randomUUID();
   const enrollmentId = randomUUID();
-  const enrolled = event("admissions.StudentEnrolled", { enrollmentId, studentId: randomUUID(), academicYearId, classSectionId });
+  const enrolled = event("admissions.StudentEnrolled", { enrollmentId, studentId: randomUUID(), academicYearId, classId });
   for (const e of [
     event("admissions.AcademicYearOpened", { academicYearId, name: "2033-34", startsOn: "2033-04-01", endsOn: "2034-03-31" }),
-    event("admissions.ClassSectionCreated", { classSectionId, academicYearId, grade: "class-3", section: "A" }),
+    event("admissions.ClassOpened", { classId, academicYearId, grade: "class-3" }),
     enrolled,
     enrolled,
   ]) {
