@@ -34,6 +34,9 @@ ClassClosed ----------------> remove the class
 StudentEnrolled ------------> open account --> StudentAccountOpened -> fees.>
                               charge what is due --> FeeCharged
 StudentClassChanged --------> new grade for the next charges
+StudentLeft ----------------> no monthly fee after the leaving month
+                              reverse the later monthly charges --> ChargeReversed
+StudentLeavingCancelled ----> charge what is due again --> FeeCharged
 ```
 
 - The stream on dev also has the old names from before v0.6.0
@@ -50,7 +53,13 @@ StudentClassChanged --------> new grade for the next charges
     schedule when the account opens, they come when the schedule is set.
   - the monthly fee for each month from the month the account opened (or the
     start of the year) to the current month in Pakistan (or the end of the
-    year). Due on the 10th, or on the day the account opened if that is later.
+    year, or the month the student left). Due on the 10th, or on the day the
+    account opened if that is later.
+- When a student leaves, the leaving month stays charged. A monthly charge
+  for a later month is reversed with the reason "The student left the school
+  on <date>." and `reversed_for_leaving`. When the leaving is cancelled, these
+  months are charged again, because the unique rule on account and month does
+  not count them. A charge that the admin reversed stays reversed.
 - The service charges what is due when an account opens, when a schedule is
   set, at start, and every hour. A charge exists at most once (unique rules
   on account and month, and on account and kind), so a second run adds

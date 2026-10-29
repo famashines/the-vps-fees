@@ -6,12 +6,14 @@ import type {
   StudentAccountOpenedEventPayloadV1,
   StudentClassChangedEventPayloadV1,
   StudentEnrolledEventPayloadV1,
+  StudentLeavingCancelledEventPayloadV1,
+  StudentLeftEventPayloadV1,
 } from "@famashines/the-vps-contracts";
 import { AckPolicy, DeliverPolicy, jetstream, jetstreamManager } from "@nats-io/jetstream";
 import type { NatsConnection } from "@nats-io/transport-node";
 import type pg from "pg";
 import { append, transaction, type Meta } from "./command.ts";
-import { chargeDue, todayInPakistan } from "./fees.ts";
+import { chargeDue, leave, todayInPakistan } from "./fees.ts";
 import type { RelayLog } from "./relay.ts";
 
 type Old = { classSectionId?: string };
@@ -69,6 +71,13 @@ export async function handleEvent(pool: pg.Pool, event: EventEnvelopeV1, now = n
         "update accounts set class_id = $2, grade = (select grade from classes where class_id = $2) where enrollment_id = $1",
         [c.enrollmentId, classOf(c)],
       );
+    } else if (event.eventType === "admissions.StudentLeft") {
+      const l = event.payload as StudentLeftEventPayloadV1;
+      await leave(client, l.studentId, l.leftOn, meta);
+    } else if (event.eventType === "admissions.StudentLeavingCancelled") {
+      const { studentId } = event.payload as StudentLeavingCancelledEventPayloadV1;
+      const { rows } = await client.query("update accounts set left_on = null where student_id = $1 returning account_id", [studentId]);
+      for (const r of rows) await chargeDue(client, r.account_id, meta);
     }
     return true;
   });

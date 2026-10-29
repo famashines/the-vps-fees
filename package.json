@@ -11,7 +11,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@famashines/the-vps-contracts": "github:famashines/the-vps-contracts#v0.6.0",
+    "@famashines/the-vps-contracts": "github:famashines/the-vps-contracts#v0.7.0",
     "@nats-io/jetstream": "3.4.0",
     "@nats-io/transport-node": "3.4.0",
     "ajv": "8.20.0",
@@ -25,6 +25,6 @@
     "typescript": "7.0.2"
   },
   "allowScripts": {
-    "github:famashines/the-vps-contracts#d50bac3a7f810dc46cdec858fa5f785fd9f106da": true
+    "github:famashines/the-vps-contracts#bf25a183c65a02a27033a446be52dcfac34b83a3": true
   }
 }
