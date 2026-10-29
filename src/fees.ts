@@ -31,7 +31,7 @@ export function monthsBetween(from: string, to: string) {
 export async function chargeDue(client: pg.PoolClient, accountId: string, meta: Meta) {
   const today = todayInPakistan(meta.occurredAt);
   const { rows } = await client.query(
-    `select a.opened_on, a.one_time_charged, a.version, y.starts_on, y.ends_on,
+    `select a.opened_on, a.one_time_charged, a.version, a.left_on, y.starts_on, y.ends_on,
        f.fee_schedule_id, f.monthly_fee, f.admission_fee, f.annual_fee
      from accounts a join years y using (academic_year_id)
      left join fee_schedules f using (academic_year_id, grade)
@@ -44,7 +44,7 @@ export async function chargeDue(client: pg.PoolClient, accountId: string, meta: 
   if (!a.one_time_charged) {
     due.push(["admission", undefined, a.admission_fee ?? 0, today], ["annual", undefined, a.annual_fee ?? 0, today]);
   }
-  for (const month of monthsBetween(later(a.starts_on, a.opened_on).slice(0, 7), earlier(a.ends_on, today).slice(0, 7))) {
+  for (const month of monthsBetween(later(a.starts_on, a.opened_on).slice(0, 7), earlier(earlier(a.ends_on, today), a.left_on ?? today).slice(0, 7))) {
     due.push(["monthly", month, a.monthly_fee, later(`${month}-10`, a.opened_on)]);
   }
   let version = a.version;
@@ -61,6 +61,22 @@ export async function chargeDue(client: pg.PoolClient, accountId: string, meta: 
   }
   await client.query("update accounts set version = $2, one_time_charged = true where account_id = $1", [accountId, version]);
   return version - a.version;
+}
+
+export async function leave(client: pg.PoolClient, studentId: string, leftOn: string, meta: Meta) {
+  const reason = `The student left the school on ${leftOn}.`;
+  const { rows } = await client.query(
+    `with leaving as (update accounts set left_on = $2 where student_id = $1 returning account_id)
+     update charges c set reversed_at = $3, reversal_reason = $4, reversed_for_leaving = true
+     from leaving where c.account_id = leaving.account_id and c.kind = 'monthly' and c.month > $5 and c.reversed_at is null
+     returning c.charge_id, c.account_id, c.amount`,
+    [studentId, leftOn, meta.occurredAt, reason, leftOn.slice(0, 7)],
+  );
+  for (const r of rows) {
+    const { version } = await bumpAccount(client, r.account_id);
+    const reversal: ChargeReversedEventPayloadV1 = { chargeId: r.charge_id, accountId: r.account_id, amount: rs(r.amount), reason };
+    await append(client, meta, r.account_id, version, "fees.ChargeReversed", reversal);
+  }
 }
 
 export async function chargeAll(pool: pg.Pool, now = new Date()) {

@@ -242,3 +242,32 @@ test("saga over NATS: each event once in stream order, also when it comes twice"
   await (await jetstreamManager(nc)).streams.delete(stream);
   await nc.close();
 });
+
+test("saga: leaving keeps the leaving month, reverses the later months, and a cancel charges them again", { skip }, async () => {
+  const year = await schoolYear("2028-29", "2028-04-01", "2029-03-31");
+  await setFeeSchedule(pool, command("fees.SetFeeSchedule", { academicYearId: year.academicYearId, grade: "class-3", monthlyFee: rs(4500) }), at("2028-04-01T05:00:00Z"));
+  const { accountId } = await enroll(year, "2028-05-02T07:00:00Z");
+  const { student_id: studentId } = (await pool.query("select student_id from accounts where account_id = $1", [accountId])).rows[0];
+  await chargeAll(pool, at("2028-10-20T05:00:00Z"));
+  assert.deepEqual(await kinds(accountId), ["2028-05", "2028-06", "2028-07", "2028-08", "2028-09", "2028-10"]);
+
+  await handleEvent(pool, event("admissions.StudentLeft", { studentId, leftOn: "2028-09-15" }), at("2028-10-29T05:00:00Z"));
+  const left = await account(accountId);
+  assert.deepEqual(left.charges.filter((c) => c.reversal).map((c) => [c.month, c.reversal!.reason]), [["2028-10", "The student left the school on 2028-09-15."]]);
+  assert.deepEqual(left.balance, rs(4500 * 5));
+  await chargeAll(pool, at("2028-12-01T05:00:00Z"));
+  assert.equal((await account(accountId)).charges.length, 6);
+
+  await handleEvent(pool, event("admissions.StudentLeavingCancelled", { studentId, leftOn: "2028-09-15" }), at("2028-12-05T05:00:00Z"));
+  const back = await account(accountId);
+  assert.deepEqual(back.charges.filter((c) => !c.reversal).map((c) => c.month), ["2028-05", "2028-06", "2028-07", "2028-08", "2028-09", "2028-10", "2028-11", "2028-12"]);
+  assert.deepEqual(back.balance, rs(4500 * 8));
+
+  const november = back.charges.find((c) => c.month === "2028-11")!;
+  await reverseCharge(pool, command("fees.ReverseCharge", { chargeId: november.chargeId, reason: "Waived" }));
+  await chargeAll(pool, at("2029-01-02T05:00:00Z"));
+  assert.deepEqual((await account(accountId)).charges.filter((c) => c.month === "2028-11").map((c) => c.reversal?.reason), ["Waived"]);
+
+  const { rows } = await pool.query("select event_type from events where aggregate_id = $1 and event_type = 'fees.ChargeReversed'", [accountId]);
+  assert.equal(rows.length, 2);
+});
