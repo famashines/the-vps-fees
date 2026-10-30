@@ -7,7 +7,7 @@ import { UndiciInstrumentation } from "@opentelemetry/instrumentation-undici";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 
-const probes = new Set(["/health", "/ready", "/api/health"]);
+const probes = new Set(["/health", "/ready", "/api/health", "/metrics"]);
 const isProbe = (url = "") => probes.has(url.split("?")[0]);
 
 const sdk = new NodeSDK({
