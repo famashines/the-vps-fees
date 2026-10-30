@@ -1,8 +1,9 @@
 import type { NatsConnection } from "@nats-io/transport-node";
+import { trace } from "@opentelemetry/api";
 import { buildApp } from "./app.ts";
 import { createPool, migrate } from "./db.ts";
 import { chargeAll } from "./fees.ts";
-import { connectNats, ensureStream, startRelay } from "./relay.ts";
+import { connectNats, ensureStream, observeOutbox, startRelay } from "./relay.ts";
 import { startSaga } from "./saga.ts";
 
 const url = process.env.DATABASE_URL;
@@ -10,7 +11,15 @@ if (!url) throw new Error("DATABASE_URL is not set");
 
 const pool = createPool(url);
 await migrate(pool);
-const app = buildApp(pool, { logger: true });
+const app = buildApp(pool, {
+  logger: {
+    mixin: () => {
+      const span = trace.getActiveSpan()?.spanContext();
+      return span ? { trace_id: span.traceId, span_id: span.spanId } : {};
+    },
+  },
+});
+observeOutbox(pool);
 
 let nc: NatsConnection | undefined;
 let stopRelay = () => {};

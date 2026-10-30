@@ -6,20 +6,31 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node src/server.ts",
+    "start": "node --import ./src/telemetry.ts src/server.ts",
     "check": "tsc",
     "test": "node --test"
   },
   "dependencies": {
     "@famashines/the-vps-contracts": "github:famashines/the-vps-contracts#v0.7.0",
+    "@fastify/otel": "0.21.4",
     "@nats-io/jetstream": "3.4.0",
     "@nats-io/transport-node": "3.4.0",
+    "@opentelemetry/api": "1.10.0",
+    "@opentelemetry/exporter-prometheus": "0.300.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.300.0",
+    "@opentelemetry/instrumentation-http": "0.300.0",
+    "@opentelemetry/instrumentation-pg": "0.77.0",
+    "@opentelemetry/instrumentation-undici": "0.34.0",
+    "@opentelemetry/resources": "3.0.0",
+    "@opentelemetry/sdk-node": "0.300.0",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "fastify": "5.12.7",
     "pg": "8.23.1"
   },
   "devDependencies": {
+    "@opentelemetry/context-async-hooks": "3.0.0",
+    "@opentelemetry/core": "3.0.0",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "typescript": "7.0.2"
