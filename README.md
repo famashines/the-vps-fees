@@ -18,8 +18,12 @@ from `the-vps-docs/schemas-structure.md`, "Money and the fee ledger".
 | POST   | `/commands/reverse-charge`   | `ReverseChargeCommandPayloadV1`: the full charge, with a reason. 409 when it is already reversed |
 | POST   | `/commands/reverse-payment`  | `ReversePaymentCommandPayloadV1`: the full payment, with a reason. The receipt number stays |
 | GET    | `/fee-schedules`             | All schedules |
-| GET    | `/accounts`                  | All accounts with `charged`, `paid` and `balance` (a negative balance is a credit) |
+| GET    | `/accounts`                  | All accounts with `charged`, `paid`, `balance` (a negative balance is a credit) and `overdue` |
 | GET    | `/accounts/:accountId`       | One account with its `charges` and `payments`, each with its `reversal` |
+
+`overdue` is the sum of the charges that are not reversed and are due before
+today in Pakistan, less the payments, and at least 0. A charge is late from
+the day after its due day: a monthly fee due on the 10th is overdue on the 11th.
 
 All money is `{ "amount": <paisa>, "currency": "PKR" }`. A command with the
 same `commandId` again gives the first answer (200), not a second entry.

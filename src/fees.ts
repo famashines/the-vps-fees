@@ -186,6 +186,7 @@ export async function listSchedules(pool: pg.Pool) {
 const accountSql = `
   select a.*, y.name as academic_year_name,
     coalesce((select sum(amount) from charges c where c.account_id = a.account_id and c.reversed_at is null), 0)::bigint as charged,
+    coalesce((select sum(amount) from charges c where c.account_id = a.account_id and c.reversed_at is null and c.due_on < $1::date), 0)::bigint as due,
     coalesce((select sum(amount) from payments p where p.account_id = a.account_id and p.reversed_at is null), 0)::bigint as paid
   from accounts a join years y using (academic_year_id)`;
 
@@ -201,17 +202,18 @@ const accountOf = (r: Record<string, any>) => ({
   charged: rs(r.charged),
   paid: rs(r.paid),
   balance: rs(r.charged - r.paid),
+  overdue: rs(Math.max(r.due - r.paid, 0)),
 });
 
-export async function listAccounts(pool: pg.Pool) {
-  const { rows } = await pool.query(`${accountSql} order by y.starts_on desc, a.opened_on desc`);
+export async function listAccounts(pool: pg.Pool, now = new Date()) {
+  const { rows } = await pool.query(`${accountSql} order by y.starts_on desc, a.opened_on desc`, [todayInPakistan(now)]);
   return rows.map(accountOf);
 }
 
 const reversalOf = (r: Record<string, any>) => (r.reversed_at ? { reversedAt: r.reversed_at.toISOString(), reason: r.reversal_reason } : undefined);
 
-export async function getAccount(pool: pg.Pool, accountId: string) {
-  const { rows } = await pool.query(`${accountSql} where a.account_id = $1`, [accountId]);
+export async function getAccount(pool: pg.Pool, accountId: string, now = new Date()) {
+  const { rows } = await pool.query(`${accountSql} where a.account_id = $2`, [todayInPakistan(now), accountId]);
   if (!rows[0]) return undefined;
   const charges = await pool.query("select * from charges where account_id = $1 order by due_on, charged_at, kind", [accountId]);
   const payments = await pool.query("select * from payments where account_id = $1 order by received_at", [accountId]);
