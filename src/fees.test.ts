@@ -4,6 +4,9 @@ import { after, before, test } from "node:test";
 import { headers } from "@nats-io/transport-node";
 import { jetstream, jetstreamManager } from "@nats-io/jetstream";
 import type { EventEnvelopeV1 } from "@famashines/the-vps-contracts";
+import { context, propagation } from "@opentelemetry/api";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
+import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import pg from "pg";
 import { buildApp } from "./app.ts";
 import { createPool, migrate } from "./db.ts";
@@ -293,4 +296,41 @@ test("overdue: the charges due before today in Pakistan, less the payments, neve
   assert.deepEqual(after.balance, rs(-7500));
   assert.deepEqual(after.overdue, rs(0));
   assert.deepEqual((await listAccounts(pool, at("2034-04-11T05:00:00Z"))).find((a) => a.accountId === accountId)!.overdue, rs(0));
+});
+
+test("saga over NATS: the trace of the message goes on to the events of the saga", { skip: (!base || !natsUrl) && "TEST_DATABASE_URL and TEST_NATS_URL are needed" }, async () => {
+  context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+  propagation.setGlobalPropagator(new W3CTraceContextPropagator());
+  const nc = await connectNats(natsUrl!);
+  const id = randomUUID().slice(0, 8);
+  const stream = `TEST_${id}`;
+  await (await jetstreamManager(nc)).streams.add({ name: stream, subjects: [`t${id}.>`], storage: "memory" });
+  const js = jetstream(nc);
+  const traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+  const academicYearId = randomUUID();
+  const classId = randomUUID();
+  const enrollmentId = randomUUID();
+  for (const e of [
+    event("admissions.AcademicYearOpened", { academicYearId, name: "2035-36", startsOn: "2035-04-01", endsOn: "2036-03-31" }),
+    event("admissions.ClassOpened", { classId, academicYearId, grade: "class-3" }),
+    event("admissions.StudentEnrolled", { enrollmentId, studentId: randomUUID(), academicYearId, classId }),
+  ]) {
+    const h = headers();
+    h.set("Nats-Msg-Id", e.eventId);
+    h.set("traceparent", `00-${traceId}-00f067aa0ba902b7-01`);
+    await js.publish(`t${id}.${e.eventType}`, JSON.stringify(e), { headers: h });
+  }
+  const stop = await startSaga(pool, nc, { info: () => {}, warn: () => {} }, stream, `d${id}`);
+  let rows: { trace_parent: string | null }[] = [];
+  for (let i = 0; i < 50 && rows.length === 0; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    rows = (await pool.query("select e.trace_parent from events e join accounts a on a.account_id = e.aggregate_id where a.enrollment_id = $1", [enrollmentId])).rows;
+  }
+  stop();
+  await (await jetstreamManager(nc)).streams.delete(stream);
+  await nc.close();
+  context.disable();
+  propagation.disable();
+  assert.ok(rows.length > 0);
+  for (const r of rows) assert.match(r.trace_parent ?? "", new RegExp(`^00-${traceId}-[0-9a-f]{16}-01$`));
 });

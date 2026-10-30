@@ -1,10 +1,19 @@
 import { randomUUID } from "node:crypto";
 import type { CommandEnvelopeV1 } from "@famashines/the-vps-contracts";
+import { context, metrics, propagation } from "@opentelemetry/api";
 import type pg from "pg";
 
 export type Command<P> = CommandEnvelopeV1 & { payload: P };
 export type Result<T> = { value: T; replayed: boolean };
 export type Meta = { correlationId: string; causationId: string; issuedBy: string | null; occurredAt: Date };
+
+const commands = metrics.getMeter("the-vps-fees").createCounter("commands", { description: "Commands by type and result" });
+
+export function traceParent() {
+  const carrier: { traceparent?: string } = {};
+  propagation.inject(context.active(), carrier);
+  return carrier.traceparent ?? null;
+}
 
 export class Refused extends Error {
   readonly status: 404 | 409 | 422;
@@ -40,9 +49,9 @@ export async function transaction<T>(pool: pg.Pool, work: (client: pg.PoolClient
 export async function append(client: pg.PoolClient, meta: Meta, aggregateId: string, aggregateVersion: number, type: string, payload: object) {
   await client.query(
     `insert into events (event_id, event_type, version, aggregate_id, aggregate_version, occurred_at,
-       correlation_id, causation_id, issued_by, payload)
-     values ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)`,
-    [randomUUID(), type, aggregateId, aggregateVersion, meta.occurredAt, meta.correlationId, meta.causationId, meta.issuedBy, payload],
+       correlation_id, causation_id, issued_by, payload, trace_parent)
+     values ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [randomUUID(), type, aggregateId, aggregateVersion, meta.occurredAt, meta.correlationId, meta.causationId, meta.issuedBy, payload, traceParent()],
   );
 }
 
@@ -64,19 +73,26 @@ export async function runCommand<P, T extends object>(
   now = new Date(),
 ): Promise<Result<T>> {
   const meta = { correlationId: command.correlationId, causationId: command.commandId, issuedBy: command.issuedBy, occurredAt: now };
+  const count = (result: Result<T>) => {
+    commands.add(1, { command_type: command.commandType, result: result.replayed ? "replayed" : "done" });
+    return result;
+  };
   try {
-    return await transaction(pool, async (client) => {
-      const replay = await earlier<T>(client, command.commandId);
-      if (replay) return replay;
-      const value = await work(client, meta);
-      await client.query("insert into handled (message_id, result) values ($1, $2)", [command.commandId, value]);
-      return { value, replayed: false };
-    });
+    return count(
+      await transaction(pool, async (client) => {
+        const replay = await earlier<T>(client, command.commandId);
+        if (replay) return replay;
+        const value = await work(client, meta);
+        await client.query("insert into handled (message_id, result) values ($1, $2)", [command.commandId, value]);
+        return { value, replayed: false };
+      }),
+    );
   } catch (error) {
     if ((error as { constraint?: string }).constraint === "handled_pkey") {
       const replay = await earlier<T>(pool, command.commandId);
-      if (replay) return replay;
+      if (replay) return count(replay);
     }
+    commands.add(1, { command_type: command.commandType, result: error instanceof Refused ? "refused" : "failed" });
     throw error;
   }
 }

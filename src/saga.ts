@@ -10,6 +10,7 @@ import type {
   StudentLeftEventPayloadV1,
 } from "@famashines/the-vps-contracts";
 import { AckPolicy, DeliverPolicy, jetstream, jetstreamManager } from "@nats-io/jetstream";
+import { metrics, propagation, ROOT_CONTEXT, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import type { NatsConnection } from "@nats-io/transport-node";
 import type pg from "pg";
 import { append, transaction, type Meta } from "./command.ts";
@@ -41,6 +42,10 @@ async function openAccount(client: pg.PoolClient, event: EventEnvelopeV1, meta: 
   await append(client, meta, account.accountId, 1, "fees.StudentAccountOpened", account);
   await chargeDue(client, account.accountId, meta);
 }
+
+const tracer = trace.getTracer("the-vps-fees");
+const meter = metrics.getMeter("the-vps-fees");
+const handled = meter.createCounter("events_handled", { description: "Events read by the saga, by type and result" });
 
 export async function handleEvent(pool: pg.Pool, event: EventEnvelopeV1, now = new Date()) {
   return transaction(pool, async (client) => {
@@ -88,17 +93,35 @@ export async function startSaga(pool: pg.Pool, nc: NatsConnection, log: RelayLog
   await jsm.consumers.info(stream, durable).catch(() =>
     jsm.consumers.add(stream, { durable_name: durable, ack_policy: AckPolicy.Explicit, deliver_policy: DeliverPolicy.All, max_ack_pending: 1 }),
   );
+  meter.createObservableGauge("saga_pending_events", { description: "Events in the stream that the saga has not read yet" }).addCallback(async (result) => {
+    const info = await jsm.consumers.info(stream, durable);
+    result.observe(info.num_pending + info.num_ack_pending, { stream, consumer: durable });
+  });
   const messages = await (await jetstream(nc).consumers.get(stream, durable)).consume({ max_messages: 1 });
   void (async () => {
     for await (const m of messages) {
       const event = m.json<EventEnvelopeV1>();
-      try {
-        if (await handleEvent(pool, event)) log.info({ eventType: event.eventType, eventId: event.eventId }, "event handled");
-        m.ack();
-      } catch (error) {
-        log.warn({ err: error, eventType: event.eventType, eventId: event.eventId }, "event failed; it comes again in 5 s");
-        m.nak(5000);
-      }
+      const traceparent = m.headers?.get("traceparent");
+      const parent = traceparent ? propagation.extract(ROOT_CONTEXT, { traceparent }) : ROOT_CONTEXT;
+      await tracer.startActiveSpan(`process ${event.eventType}`, {
+        kind: SpanKind.CONSUMER,
+        attributes: { "messaging.system": "nats", "messaging.operation.type": "process", "messaging.destination.name": m.subject, "messaging.message.id": event.eventId },
+      }, parent, async (span) => {
+        try {
+          const done = await handleEvent(pool, event);
+          if (done) log.info({ eventType: event.eventType, eventId: event.eventId }, "event handled");
+          handled.add(1, { event_type: event.eventType, result: done ? "handled" : "duplicate" });
+          m.ack();
+        } catch (error) {
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          span.recordException(error as Error);
+          handled.add(1, { event_type: event.eventType, result: "failed" });
+          log.warn({ err: error, eventType: event.eventType, eventId: event.eventId }, "event failed; it comes again in 5 s");
+          m.nak(5000);
+        } finally {
+          span.end();
+        }
+      });
     }
   })();
   return () => messages.stop();

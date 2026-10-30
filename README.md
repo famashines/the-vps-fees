@@ -70,6 +70,33 @@ StudentLeavingCancelled ----> charge what is due again --> FeeCharged
   nothing.
 - A new schedule does not change charges that exist.
 
+## Telemetry
+
+`npm start` loads `src/telemetry.ts` first (`node --import`). It is the same
+file in the 3 services:
+
+- Traces: OpenTelemetry, OTLP HTTP to Tempo. Spans for each request (with
+  `http.route`) and for each SQL query under a span (the relay and the hourly
+  charge make no traces of their own). The probes are not traced.
+- The saga reads the `traceparent` header of each message from `ADMISSIONS`
+  and handles the event in a `process <event type>` CONSUMER span under it. So
+  an enrollment is one trace: gateway, admissions, publish, fees saga. The
+  events that the saga or a command writes store the trace
+  (`events.trace_parent`), and the relay publishes them in a
+  `publish <event type>` PRODUCER span with the `traceparent` header.
+- Metrics, a Prometheus exporter on port `9464` (`METRICS_PORT`):
+  `http_server_request_duration_seconds` by `http_route`, `commands_total` by
+  `command_type` and `result`, `events_handled_total` by `event_type` and
+  `result` (handled, duplicate, failed), `saga_pending_events` (the events in
+  `ADMISSIONS` that the saga has not read yet), `events_published_total`, and
+  `outbox_unpublished_events`.
+- Logs: each line has `trace_id` and `span_id` when a span is active.
+
+Settings: `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_RESOURCE_ATTRIBUTES`, and `OTEL_SDK_DISABLED=true` to turn it off. The
+tests do not load the telemetry. At shutdown, the spans of the last 5 seconds
+can be lost.
+
 ## Receipts
 
 `R-<school year>-<6 digits>`, for example `R-2026-27-000001`: one counter for

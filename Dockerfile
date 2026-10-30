@@ -9,4 +9,4 @@ ARG RELEASE=local
 ENV RELEASE=$RELEASE
 USER 1000:1000
 EXPOSE 8080
-CMD ["node", "src/server.ts"]
+CMD ["node", "--import", "./src/telemetry.ts", "src/server.ts"]
