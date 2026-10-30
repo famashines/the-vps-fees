@@ -7,7 +7,7 @@ import type { EventEnvelopeV1 } from "@famashines/the-vps-contracts";
 import pg from "pg";
 import { buildApp } from "./app.ts";
 import { createPool, migrate } from "./db.ts";
-import { chargeAll, getAccount, monthsBetween, receivePayment, reverseCharge, reversePayment, setFeeSchedule } from "./fees.ts";
+import { chargeAll, getAccount, listAccounts, monthsBetween, receivePayment, reverseCharge, reversePayment, setFeeSchedule } from "./fees.ts";
 import { connectNats } from "./relay.ts";
 import { handleEvent, startSaga } from "./saga.ts";
 
@@ -270,4 +270,27 @@ test("saga: leaving keeps the leaving month, reverses the later months, and a ca
 
   const { rows } = await pool.query("select event_type from events where aggregate_id = $1 and event_type = 'fees.ChargeReversed'", [accountId]);
   assert.equal(rows.length, 2);
+});
+
+test("overdue: the charges due before today in Pakistan, less the payments, never below 0", { skip }, async () => {
+  const year = await schoolYear("2034-35", "2034-04-01", "2035-03-31");
+  await setFeeSchedule(pool, command("fees.SetFeeSchedule", { academicYearId: year.academicYearId, grade: "class-3", monthlyFee: rs(4500), admissionFee: rs(10000) }), at("2034-03-20T05:00:00Z"));
+  const { accountId } = await enroll(year, "2034-04-02T07:00:00Z");
+  assert.deepEqual((await account(accountId)).charges.map((c) => [c.month ?? c.kind, c.dueOn]), [["admission", "2034-04-02"], ["2034-04", "2034-04-10"]]);
+  const overdue = async (iso: string) => (await getAccount(pool, accountId, at(iso)))!.overdue;
+
+  assert.deepEqual(await overdue("2034-04-02T10:00:00Z"), rs(0));
+  assert.deepEqual(await overdue("2034-04-05T05:00:00Z"), rs(10000));
+  assert.deepEqual(await overdue("2034-04-10T18:59:00Z"), rs(10000));
+  assert.deepEqual(await overdue("2034-04-10T19:00:00Z"), rs(14500));
+
+  await receivePayment(pool, command("fees.ReceivePayment", { accountId, amount: rs(12000), method: "cash" as const }));
+  assert.deepEqual(await overdue("2034-04-11T05:00:00Z"), rs(2500));
+
+  const admission = (await account(accountId)).charges.find((c) => c.kind === "admission")!;
+  await reverseCharge(pool, command("fees.ReverseCharge", { chargeId: admission.chargeId, reason: "Sibling: no admission fee" }));
+  const after = (await getAccount(pool, accountId, at("2034-04-11T05:00:00Z")))!;
+  assert.deepEqual(after.balance, rs(-7500));
+  assert.deepEqual(after.overdue, rs(0));
+  assert.deepEqual((await listAccounts(pool, at("2034-04-11T05:00:00Z"))).find((a) => a.accountId === accountId)!.overdue, rs(0));
 });
