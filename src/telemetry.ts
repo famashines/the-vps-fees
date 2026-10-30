@@ -13,7 +13,7 @@ const isProbe = (url = "") => probes.has(url.split("?")[0]);
 const sdk = new NodeSDK({
   resource: resourceFromAttributes({ "service.version": process.env.RELEASE ?? "local" }),
   traceExporter: new OTLPTraceExporter(),
-  metricReaders: [new PrometheusExporter({ port: Number(process.env.METRICS_PORT ?? 9464) })],
+  metricReaders: [new PrometheusExporter({ host: "0.0.0.0", port: Number(process.env.METRICS_PORT ?? 9464) })],
   instrumentations: [
     new HttpInstrumentation({ ignoreIncomingRequestHook: (request) => isProbe(request.url) }),
     new UndiciInstrumentation(),
