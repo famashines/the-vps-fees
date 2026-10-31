@@ -90,6 +90,8 @@ file in the 3 services:
   `result` (handled, duplicate, failed), `saga_pending_events` (the events in
   `ADMISSIONS` that the saga has not read yet), `events_published_total`, and
   `outbox_unpublished_events`.
+  At start, each command type and each event type in the streams starts at 0,
+  so `increase()` also counts the first event after a restart.
 - Logs: each line has `trace_id` and `span_id` when a span is active.
 
 Settings: `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT`,

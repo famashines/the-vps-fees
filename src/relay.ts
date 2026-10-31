@@ -22,6 +22,8 @@ export async function ensureStream(nc: NatsConnection) {
   } catch {
     await jsm.streams.add({ name: STREAM, subjects: ["fees.>"], storage: "file", num_replicas: 1 });
   }
+  const { state } = await jsm.streams.info(STREAM, { subjects_filter: ">" });
+  for (const event_type of Object.keys(state.subjects ?? {})) published.add(0, { event_type });
 }
 
 export async function publishBatch(pool: pg.Pool, nc: NatsConnection, limit = 100) {
