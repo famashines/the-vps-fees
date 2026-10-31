@@ -1,6 +1,6 @@
 import Fastify, { type FastifyServerOptions } from "fastify";
 import type pg from "pg";
-import { Refused, type Command, type Result } from "./command.ts";
+import { Refused, type Command, type Result, zeroCommandCounts } from "./command.ts";
 import { getAccount, listAccounts, listSchedules, receivePayment, reverseCharge, reversePayment, setFeeSchedule } from "./fees.ts";
 import { errorsOf, payloadValidators, validEnvelope } from "./validate.ts";
 
@@ -28,6 +28,7 @@ export function buildApp(pool: pg.Pool, options: FastifyServerOptions = {}) {
     "fees.ReverseCharge": (c) => reverseCharge(pool, c),
     "fees.ReversePayment": (c) => reversePayment(pool, c),
   };
+  zeroCommandCounts(Object.keys(handlers));
 
   const route = (path: string, type: CommandType) =>
     app.post(path, async (request, reply) => {

@@ -93,6 +93,8 @@ export async function startSaga(pool: pg.Pool, nc: NatsConnection, log: RelayLog
   await jsm.consumers.info(stream, durable).catch(() =>
     jsm.consumers.add(stream, { durable_name: durable, ack_policy: AckPolicy.Explicit, deliver_policy: DeliverPolicy.All, max_ack_pending: 1 }),
   );
+  const { state } = await jsm.streams.info(stream, { subjects_filter: ">" });
+  for (const event_type of Object.keys(state.subjects ?? {})) for (const result of ["handled", "duplicate", "failed"]) handled.add(0, { event_type, result });
   meter.createObservableGauge("saga_pending_events", { description: "Events in the stream that the saga has not read yet" }).addCallback(async (result) => {
     const info = await jsm.consumers.info(stream, durable);
     result.observe(info.num_pending + info.num_ack_pending, { stream, consumer: durable });

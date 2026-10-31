@@ -9,6 +9,10 @@ export type Meta = { correlationId: string; causationId: string; issuedBy: strin
 
 const commands = metrics.getMeter("the-vps-fees").createCounter("commands", { description: "Commands by type and result" });
 
+export function zeroCommandCounts(types: string[]) {
+  for (const command_type of types) for (const result of ["done", "replayed", "refused", "failed"]) commands.add(0, { command_type, result });
+}
+
 export function traceParent() {
   const carrier: { traceparent?: string } = {};
   propagation.inject(context.active(), carrier);
