@@ -393,4 +393,6 @@ test("events: the newest first, at most the limit", { skip }, async () => {
   assert.equal(events.length, 2);
   assert.ok(events[0].occurredAt >= events[1].occurredAt);
   assert.deepEqual(Object.keys(events[0]).sort(), ["aggregateId", "eventId", "eventType", "issuedBy", "occurredAt", "payload"]);
+  const types = (await buildApp(pool).inject({ url: "/events?limit=100" })).json().map((e: { eventType: string }) => e.eventType);
+  assert.ok(!types.includes("fees.FeeCharged") && !types.includes("fees.StudentAccountOpened"));
 });
