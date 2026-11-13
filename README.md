@@ -30,7 +30,9 @@ from `the-vps-docs/schemas-structure.md`, "Money and the fee ledger".
 
 ## Cash flow
 
-- `charged`: the charges that are not reversed, on their due day.
+- `charged`: the charges that are not reversed. A monthly fee counts on the
+  1st of its month, so the month shows its charge before the due day. A
+  one-time fee counts on its due day.
 - `received`: all payments, on the day they were received in Pakistan.
 - `refunded`: the reversed payments, on the day of the reversal in Pakistan.
   Income of a day is `received - refunded`, so a figure of a past day does

@@ -59,7 +59,7 @@ export async function listExpenses(pool: pg.Pool, from: string, to: string) {
 export async function cashFlow(pool: pg.Pool, from: string, to: string) {
   const { rows } = await pool.query(
     `with entries (day, charged, received, refunded, spent) as (
-       select due_on, amount, 0, 0, 0 from charges where reversed_at is null
+       select case when kind = 'monthly' then least(due_on, (month || '-01')::date) else due_on end, amount, 0, 0, 0 from charges where reversed_at is null
        union all
        select (received_at at time zone 'Asia/Karachi')::date, 0, amount, 0, 0 from payments
        union all

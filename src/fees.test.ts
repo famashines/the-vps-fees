@@ -215,7 +215,7 @@ test("expenses and cash flow: by day in Pakistan, a refund on its own day, a rev
 
   const flow = await cashFlow(pool, "2040-04-01", "2040-05-31");
   assert.deepEqual(flow.days.map((d) => [d.date, d.charged.amount / 100, d.received.amount / 100, d.refunded.amount / 100, d.spent.amount / 100]), [
-    ["2040-04-10", 4500, 0, 0, 0],
+    ["2040-04-01", 4500, 0, 0, 0],
     ["2040-04-16", 0, 5000, 0, 0],
     ["2040-04-20", 0, 3000, 0, 2000],
     ["2040-05-03", 0, 0, 3000, 0],
