@@ -20,6 +20,7 @@ from `the-vps-docs/schemas-structure.md`, "Money and the fee ledger".
 | POST   | `/commands/record-expense`   | `RecordExpenseCommandPayloadV1`: money the school spent, with a category. 422 for a day in the future |
 | POST   | `/commands/reverse-expense`  | `ReverseExpenseCommandPayloadV1`: the full expense, with a reason. 409 when it is already reversed |
 | GET    | `/fee-schedules`             | All schedules |
+| GET    | `/events?limit=`             | The newest events of the service (50, at most 100), for the activity log of the dashboard |
 | GET    | `/accounts`                  | All accounts with `charged`, `paid`, `balance` (a negative balance is a credit) and `overdue` |
 | GET    | `/accounts/:accountId`       | One account with its `charges` and `payments`, each with its `reversal` |
 

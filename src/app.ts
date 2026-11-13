@@ -82,5 +82,11 @@ export function buildApp(pool: pg.Pool, options: FastifyServerOptions = {}) {
   period("/expenses", (from, to) => listExpenses(pool, from, to));
   period("/cash-flow", (from, to) => cashFlow(pool, from, to));
 
+  app.get<{ Querystring: { limit?: string } }>("/events", async (request) => {
+    const limit = Math.min(Math.max(Number(request.query.limit) || 50, 1), 100);
+    const { rows } = await pool.query("select event_id, event_type, occurred_at, aggregate_id, issued_by, payload from events order by occurred_at desc, aggregate_version desc limit $1", [limit]);
+    return rows.map((r) => ({ eventId: r.event_id, eventType: r.event_type, occurredAt: r.occurred_at.toISOString(), aggregateId: r.aggregate_id, issuedBy: r.issued_by, payload: r.payload }));
+  });
+
   return app;
 }
