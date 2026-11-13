@@ -387,3 +387,10 @@ test("saga over NATS: the trace of the message goes on to the events of the saga
   assert.ok(rows.length > 0);
   for (const r of rows) assert.match(r.trace_parent ?? "", new RegExp(`^00-${traceId}-[0-9a-f]{16}-01$`));
 });
+
+test("events: the newest first, at most the limit", { skip }, async () => {
+  const events = (await buildApp(pool).inject({ url: "/events?limit=2" })).json();
+  assert.equal(events.length, 2);
+  assert.ok(events[0].occurredAt >= events[1].occurredAt);
+  assert.deepEqual(Object.keys(events[0]).sort(), ["aggregateId", "eventId", "eventType", "issuedBy", "occurredAt", "payload"]);
+});
