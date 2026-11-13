@@ -2,7 +2,7 @@
 
 The fees service of the-vps: one fee account for each enrolled student and
 school year, with an append-only ledger, cash payments with receipt numbers,
-and reversals. It is internal: only the gateway (`the-vps-gateway`) calls it.
+and reversals, and the expenses of the school. It is internal: only the gateway (`the-vps-gateway`) calls it.
 
 Fastify on Node 24 (TypeScript, run directly), PostgreSQL through `pg`, NATS
 JetStream, the contracts of `@famashines/the-vps-contracts`. The rules come
@@ -17,9 +17,29 @@ from `the-vps-docs/schemas-structure.md`, "Money and the fee ledger".
 | POST   | `/commands/receive-payment`  | `ReceivePaymentCommandPayloadV1`: cash, at least 1 rupee. 201 with the receipt number |
 | POST   | `/commands/reverse-charge`   | `ReverseChargeCommandPayloadV1`: the full charge, with a reason. 409 when it is already reversed |
 | POST   | `/commands/reverse-payment`  | `ReversePaymentCommandPayloadV1`: the full payment, with a reason. The receipt number stays |
+| POST   | `/commands/record-expense`   | `RecordExpenseCommandPayloadV1`: money the school spent, with a category. 422 for a day in the future |
+| POST   | `/commands/reverse-expense`  | `ReverseExpenseCommandPayloadV1`: the full expense, with a reason. 409 when it is already reversed |
 | GET    | `/fee-schedules`             | All schedules |
 | GET    | `/accounts`                  | All accounts with `charged`, `paid`, `balance` (a negative balance is a credit) and `overdue` |
 | GET    | `/accounts/:accountId`       | One account with its `charges` and `payments`, each with its `reversal` |
+
+| GET    | `/expenses?from=&to=`        | The expenses with `spentOn` in the period, newest first, each with its `reversal` |
+| GET    | `/cash-flow?from=&to=`       | One row for each day in the period that has money: `charged`, `received`, `refunded` and `spent` |
+
+`from` and `to` are days (`YYYY-MM-DD`), at most 800 days apart.
+
+## Cash flow
+
+- `charged`: the charges that are not reversed, on their due day.
+- `received`: all payments, on the day they were received in Pakistan.
+- `refunded`: the reversed payments, on the day of the reversal in Pakistan.
+  Income of a day is `received - refunded`, so a figure of a past day does
+  not change, and a refund counts on the day the cash goes out.
+- `spent`: the expenses that are not reversed, on `spentOn`. A reversed
+  expense is a correction of a wrong entry, so it does not count on any day.
+
+An expense is not in the ledger of a student. It is an append-only record
+with a full reversal that needs a reason, the same as a payment.
 
 `overdue` is the sum of the charges that are not reversed and are due before
 today in Pakistan, less the payments, and at least 0. A charge is late from

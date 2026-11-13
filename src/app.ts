@@ -1,6 +1,7 @@
 import Fastify, { type FastifyServerOptions } from "fastify";
 import type pg from "pg";
 import { Refused, type Command, type Result, zeroCommandCounts } from "./command.ts";
+import { cashFlow, listExpenses, recordExpense, reverseExpense } from "./expenses.ts";
 import { getAccount, listAccounts, listSchedules, receivePayment, reverseCharge, reversePayment, setFeeSchedule } from "./fees.ts";
 import { errorsOf, payloadValidators, validEnvelope } from "./validate.ts";
 
@@ -27,6 +28,8 @@ export function buildApp(pool: pg.Pool, options: FastifyServerOptions = {}) {
     "fees.ReceivePayment": (c) => receivePayment(pool, c),
     "fees.ReverseCharge": (c) => reverseCharge(pool, c),
     "fees.ReversePayment": (c) => reversePayment(pool, c),
+    "fees.RecordExpense": (c) => recordExpense(pool, c),
+    "fees.ReverseExpense": (c) => reverseExpense(pool, c),
   };
   zeroCommandCounts(Object.keys(handlers));
 
@@ -56,6 +59,8 @@ export function buildApp(pool: pg.Pool, options: FastifyServerOptions = {}) {
   route("/commands/receive-payment", "fees.ReceivePayment");
   route("/commands/reverse-charge", "fees.ReverseCharge");
   route("/commands/reverse-payment", "fees.ReversePayment");
+  route("/commands/record-expense", "fees.RecordExpense");
+  route("/commands/reverse-expense", "fees.ReverseExpense");
 
   app.get("/fee-schedules", async () => listSchedules(pool));
   app.get("/accounts", async () => listAccounts(pool));
@@ -63,6 +68,19 @@ export function buildApp(pool: pg.Pool, options: FastifyServerOptions = {}) {
     const account = uuid.test(request.params.accountId) && (await getAccount(pool, request.params.accountId));
     return account || reply.code(404).send({ error: "The account does not exist." });
   });
+
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  const period = (path: string, read: (from: string, to: string) => Promise<object>) =>
+    app.get<{ Querystring: { from?: string; to?: string } }>(path, async (request, reply) => {
+      const { from = "", to = "" } = request.query;
+      const days = (Date.parse(to) - Date.parse(from)) / 86_400_000;
+      if (!day.test(from) || !day.test(to) || !(days >= 0 && days <= 800)) {
+        return reply.code(400).send({ error: "from and to must be days (YYYY-MM-DD), from not after to, and at most 800 days apart." });
+      }
+      return read(from, to);
+    });
+  period("/expenses", (from, to) => listExpenses(pool, from, to));
+  period("/cash-flow", (from, to) => cashFlow(pool, from, to));
 
   return app;
 }

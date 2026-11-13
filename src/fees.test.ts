@@ -10,6 +10,7 @@ import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import pg from "pg";
 import { buildApp } from "./app.ts";
 import { createPool, migrate } from "./db.ts";
+import { cashFlow, listExpenses, recordExpense, reverseExpense } from "./expenses.ts";
 import { chargeAll, getAccount, listAccounts, monthsBetween, receivePayment, reverseCharge, reversePayment, setFeeSchedule } from "./fees.ts";
 import { connectNats } from "./relay.ts";
 import { handleEvent, startSaga } from "./saga.ts";
@@ -190,6 +191,58 @@ test("reversals: once each, with the full amount, and the receipt number stays",
   assert.equal(after.payments[0].reversal!.reason, "Entered twice");
   await chargeAll(pool, at("2031-04-20T07:00:00Z"));
   assert.equal((await account(accountId)).charges.filter((c) => c.kind === "admission").length, 1);
+});
+
+test("expenses and cash flow: by day in Pakistan, a refund on its own day, a reversed expense does not count", { skip }, async () => {
+  const year = await schoolYear("2040-41", "2040-04-01", "2041-03-31");
+  await setFeeSchedule(pool, command("fees.SetFeeSchedule", { academicYearId: year.academicYearId, grade: "class-3", monthlyFee: rs(4500) }), at("2040-04-01T07:00:00Z"));
+  const { accountId } = await enroll(year, "2040-04-02T07:00:00Z", at("2040-04-02T07:00:00Z"));
+  const pay = (rupees: number, when: string) => receivePayment(pool, command("fees.ReceivePayment", { accountId, amount: rs(rupees), method: "cash" as const }), at(when));
+  await pay(5000, "2040-04-15T20:00:00Z");
+  const wrong = await pay(3000, "2040-04-20T07:00:00Z");
+  await reversePayment(pool, command("fees.ReversePayment", { paymentId: wrong.value.paymentId, reason: "Paid back" }), at("2040-05-03T07:00:00Z"));
+
+  const spend = (rupees: number, spentOn: string) =>
+    recordExpense(pool, command("fees.RecordExpense", { spentOn, category: "utilities" as const, amount: rs(rupees), description: "Electricity bill" }), at("2040-04-23T07:00:00Z"));
+  const kept = await spend(2000, "2040-04-20");
+  const twice = await spend(700, "2040-04-22");
+  await assert.rejects(spend(100, "2040-04-24"), { status: 422, field: "spentOn" });
+  const undo = command("fees.ReverseExpense", { expenseId: twice.value.expenseId, reason: "Entered twice" });
+  assert.deepEqual((await reverseExpense(pool, undo)).value.amount, rs(700));
+  assert.equal((await reverseExpense(pool, undo)).replayed, true);
+  await assert.rejects(reverseExpense(pool, command("fees.ReverseExpense", { expenseId: twice.value.expenseId, reason: "Again" })), { status: 409 });
+  await assert.rejects(reverseExpense(pool, command("fees.ReverseExpense", { expenseId: randomUUID(), reason: "None" })), { status: 404 });
+
+  const flow = await cashFlow(pool, "2040-04-01", "2040-05-31");
+  assert.deepEqual(flow.days.map((d) => [d.date, d.charged.amount / 100, d.received.amount / 100, d.refunded.amount / 100, d.spent.amount / 100]), [
+    ["2040-04-10", 4500, 0, 0, 0],
+    ["2040-04-16", 0, 5000, 0, 0],
+    ["2040-04-20", 0, 3000, 0, 2000],
+    ["2040-05-03", 0, 0, 3000, 0],
+  ]);
+  const income = flow.days.reduce((sum, d) => sum + d.received.amount - d.refunded.amount, 0);
+  assert.equal(income, (await account(accountId)).paid.amount);
+  assert.deepEqual((await cashFlow(pool, "2040-04-17", "2040-04-19")).days, []);
+
+  const listed = await listExpenses(pool, "2040-04-01", "2040-04-30");
+  assert.deepEqual(listed.map((e) => [e.expenseId, e.spentOn, e.reversal?.reason]), [
+    [twice.value.expenseId, "2040-04-22", "Entered twice"],
+    [kept.value.expenseId, "2040-04-20", undefined],
+  ]);
+  const events = await pool.query("select event_type, aggregate_version from events where aggregate_id = $1 order by aggregate_version", [twice.value.expenseId]);
+  assert.deepEqual(events.rows.map((r) => [r.event_type, r.aggregate_version]), [["fees.ExpenseRecorded", 1], ["fees.ExpenseReversed", 2]]);
+
+  const app = buildApp(pool);
+  const post = (path: string, type: string, payload: object) => app.inject({ method: "POST", url: `/commands/${path}`, payload: command(type, payload) });
+  const expense = { spentOn: "2026-11-01", category: "rent", amount: rs(50000), description: "Rent for November", paidTo: "Mr Aslam" };
+  assert.equal((await post("record-expense", "fees.RecordExpense", expense)).statusCode, 201);
+  assert.equal((await post("record-expense", "fees.RecordExpense", { ...expense, category: "gifts" })).statusCode, 400);
+  assert.equal((await post("record-expense", "fees.RecordExpense", { ...expense, spentOn: "2999-01-01" })).json().fields[0].field, "spentOn");
+  assert.equal((await app.inject({ url: "/expenses?from=2026-11-01&to=2026-11-01" })).json()[0].paidTo, "Mr Aslam");
+  for (const query of ["", "?from=2040-04-01", "?from=2040-05-01&to=2040-04-01", "?from=2040-04-01&to=2043-04-01", "?from=x&to=y"]) {
+    assert.equal((await app.inject({ url: `/cash-flow${query}` })).statusCode, 400, query);
+  }
+  assert.equal((await app.inject({ url: "/cash-flow?from=2040-04-01&to=2040-05-31" })).json().days.length, 4);
 });
 
 test("http: commands are checked, an unknown year or account gives 404, the account has its ledger", { skip }, async () => {
